@@ -1,0 +1,15 @@
+
+fastapi
+uvicorn
+langchain
+langchain-community
+langchain-openai
+langgraph
+python-dotenv
+requests
+httpx
+pydantic
+duckduckgo-search
+redis
+sqlalchemy
+pymysql

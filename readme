@@ -1,0 +1,23 @@
+方法	路径	认证	说明
+认证			
+POST	/api/auth/register	❌	用户注册
+POST	/api/auth/login	❌	用户登录
+POST	/api/auth/refresh	❌	刷新令牌
+GET	/api/auth/me	✅	获取当前用户
+POST	/api/auth/change-password	✅	修改密码
+POST	/api/auth/logout	✅	退出登录
+行程			
+POST	/api/trips	✅	创建行程
+GET	/api/trips	✅	获取行程列表
+GET	/api/trips/stats	✅	获取统计
+GET	/api/trips/{id}	✅	获取行程详情
+PUT	/api/trips/{id}	✅	更新行程
+DELETE	/api/trips/{id}	✅	删除行程
+POST	/api/trips/{id}/complete	✅	完成行程
+预算			
+GET	/api/trips/{id}/budget	✅	获取预算汇总
+POST	/api/trips/{id}/budget	✅	添加预算项
+PUT	/api/trips/budget/{id}	✅	更新预算项
+DELETE	/api/trips/budget/{id}	✅	删除预算项
+POST	/api/trips/{id}/expenses	✅	添加支出
+GET	/api/trips/{id}/expenses	✅	获取支出记录
