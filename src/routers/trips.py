@@ -10,7 +10,7 @@ from src.models.budget import BudgetItem
 from src.schemas.trip import TripCreate, TripUpdate, TripResponse, TripStats, TripStatus
 from src.middleware.auth import get_current_user
 
-router = APIRouter(prefix="/api/trips", tags=["行程管理"])
+router = APIRouter(prefix="/travelapi/trips", tags=["行程管理"])
 
 
 # ==================== 行程 CRUD ====================

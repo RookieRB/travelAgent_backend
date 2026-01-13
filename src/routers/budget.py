@@ -17,7 +17,7 @@ from src.routers import sync_trip_budget
 
 
 
-router = APIRouter(prefix="/api/trips", tags=["预算管理"])
+router = APIRouter(prefix="/travelapi/trips", tags=["预算管理"])
 
 
 

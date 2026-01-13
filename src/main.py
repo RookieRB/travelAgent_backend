@@ -125,7 +125,7 @@ async def startup():
 
 
 
-@app.post("/api/chat")
+@app.post("/travelapi/chat")
 async def chat(req: ChatRequest, db: Session = Depends(get_db)):
     """智能聊天接口"""
     if not chat_agent:
@@ -198,7 +198,7 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/chat/stream")
+@app.post("/travelapi/chat/stream")
 async def chat_stream(req: ChatRequest):
     """
     流式聊天接口（SSE）
@@ -226,7 +226,7 @@ async def chat_stream(req: ChatRequest):
     )
 
 
-@app.post("/api/chat/sync")
+@app.post("/travelapi/chat/sync")
 async def chat_sync(req: ChatRequest):
     """
     同步聊天接口（使用线程池运行同步方法）
@@ -257,7 +257,7 @@ async def chat_sync(req: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/history/{session_id}", response_model=HistoryResponse)
+@app.get("/travelapi/history/{session_id}", response_model=HistoryResponse)
 async def get_history(session_id: str):
     """获取会话历史"""
     if not chat_agent:
@@ -270,7 +270,7 @@ async def get_history(session_id: str):
     )
 
 
-@app.delete("/api/history/{session_id}")
+@app.delete("/travelapi/history/{session_id}")
 async def clear_history(session_id: str):
     """清除会话历史"""
     if not chat_agent:
@@ -280,7 +280,7 @@ async def clear_history(session_id: str):
     return {"message": f"History cleared for session: {session_id}"}
 
 
-@app.get("/api/tools")
+@app.get("/travelapi/tools")
 async def list_tools():
     """列出所有可用工具"""
     if not chat_agent:
@@ -297,7 +297,7 @@ async def list_tools():
     return {"tools": tools_info}
 
 
-@app.post("/api/tool/call")
+@app.post("/travelapi/tool/call")
 async def call_tool_directly(tool_name: str, arguments: Dict[str, Any]):
     """直接调用指定工具（调试用）"""
     if not chat_agent:
@@ -323,7 +323,7 @@ async def call_tool_directly(tool_name: str, arguments: Dict[str, Any]):
 
 # ===================== 新增：计划获取接口 =====================
 
-@app.get("/api/plan/{session_id}", response_model=PlanResponse)
+@app.get("/travelapi/plan/{session_id}", response_model=PlanResponse)
 async def get_plan(session_id: str):
     """
     获取指定 session 的旅行计划
@@ -350,7 +350,7 @@ async def get_plan(session_id: str):
         )
 
 
-@app.get("/api/plan/{session_id}/status", response_model=PlanStatusResponse)
+@app.get("/travelapi/plan/{session_id}/status", response_model=PlanStatusResponse)
 async def get_plan_status(session_id: str):
     """
     获取计划生成状态（用于前端轮询）
@@ -379,7 +379,7 @@ async def get_plan_status(session_id: str):
         )
 
 
-@app.delete("/api/plan/{session_id}")
+@app.delete("/travelapi/plan/{session_id}")
 async def delete_plan(session_id: str):
     """删除指定 session 的旅行计划"""
     success = redis_service.delete_plan(session_id)
@@ -390,7 +390,7 @@ async def delete_plan(session_id: str):
         raise HTTPException(status_code=500, detail="Failed to delete plan")
 
 
-@app.get("/api/plans")
+@app.get("/travelapi/plans")
 async def list_plans(limit: int = 100):
     """列出所有计划（管理接口）"""
     plans = redis_service.list_plans(limit=limit)
@@ -420,13 +420,13 @@ async def root():
         "name": "Travel Planner API",
         "version": "1.0.0",
         "endpoints": {
-            "chat": "POST /api/chat",
-            "chat_stream": "POST /api/chat/stream", 
-            "chat_sync": "POST /api/chat/sync",
-            "history": "GET /api/history/{session_id}",
-            "clear_history": "DELETE /api/history/{session_id}",
-            "tools": "GET /api/tools",
-            "tool_call": "POST /api/tool/call",
+            "chat": "POST /travelapi/chat",
+            "chat_stream": "POST /travelapi/chat/stream", 
+            "chat_sync": "POST /travelapi/chat/sync",
+            "history": "GET /travelapi/history/{session_id}",
+            "clear_history": "DELETE /travelapi/history/{session_id}",
+            "tools": "GET /travelapi/tools",
+            "tool_call": "POST /travelapi/tool/call",
             "health": "GET /health"
         }
     }

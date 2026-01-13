@@ -14,7 +14,7 @@ from src.schemas.chat import (
     ChatHistoryResponse, ChatMessageResponse
 )
 
-router = APIRouter(prefix="/api/chat", tags=["聊天"])
+router = APIRouter(prefix="/travelapi/chat", tags=["聊天"])
 
 
 # ==================== 聊天历史接口 ====================

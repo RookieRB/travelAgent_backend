@@ -15,7 +15,7 @@ from src.utils.security import (
 from src.middleware.auth import get_current_user
 from src.services.config import settings
 
-router = APIRouter(prefix="/api/auth", tags=["认证"])
+router = APIRouter(prefix="/travelapi/auth", tags=["认证"])
 
 
 # ==================== 认证相关 ====================
