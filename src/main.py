@@ -21,10 +21,14 @@ from src.services.chat_service import ChatService
 from src.services.mysql_service import get_db
 
 
-from src.services.mysql_service import engine, Base
-from src.routers import auth, trips, budget
-from src.middleware.auth import AuthMiddleware
 
+
+from src.services.mysql_service import engine, Base
+from src.routers import auth, trips, budget,chat,plans
+from src.middleware.auth import get_optional_user
+from src.models.user import User
+from src.agents.travel_workflow import create_travel_graph
+        
 
 # ============ 请求/响应模型 ============
 class ChatRequest(BaseModel):
@@ -83,6 +87,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(trips.router)
 app.include_router(budget.router)
+app.include_router(chat.router)
+app.include_router(plans.router)
 
 
 # 初始化聊天 Agent
@@ -112,8 +118,7 @@ async def startup():
     
     # 初始化 Agent
     try:
-        from src.agents.workflow import create_travel_agent_graph
-        travel_graph = create_travel_agent_graph()
+        travel_graph = create_travel_graph()
         chat_agent = TravelChatAgent(travel_graph=travel_graph)
         print("✅ Chat Agent 初始化成功")
     except Exception as e:
@@ -126,13 +131,17 @@ async def startup():
 
 
 @app.post("/travelapi/chat")
-async def chat(req: ChatRequest, db: Session = Depends(get_db)):
+async def chat(req: ChatRequest, db: Session = Depends(get_db), current_user: Optional[User] = Depends(get_optional_user)):
     """智能聊天接口"""
     if not chat_agent:
         raise HTTPException(status_code=500, detail="Chat agent not initialized")
 
     session_id = req.session_id if req.session_id else f"session_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
     
+    final_user_id = None
+    if current_user:
+        final_user_id = current_user.id
+
     print(f"📌 API 收到请求，session_id: {session_id}")
 
     # ✅ 保存用户消息
@@ -141,10 +150,23 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         session_id=session_id,
         role="user",
         content=req.message,
-        user_id=req.user_id if hasattr(req, 'user_id') else None
+        user_id=final_user_id
     )
 
+    # ✅ 获取历史记录
+    history = ChatService.get_session_messages(db, session_id, limit=20)
+    
+
+    # ✅ 转换为 LangChain 消息格式
+    chat_history = []
+    for msg in history:
+        if msg.role == "user":
+            chat_history.append({"role": "user", "content": msg.content})
+        elif msg.role == "assistant":
+            chat_history.append({"role": "assistant", "content": msg.content})
+
     set_session_id(session_id)
+
 
     for tool in chat_agent.tools:
         if hasattr(tool, 'set_session_id'):
@@ -154,19 +176,28 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         if req.stream:
             async def generate():
                 set_session_id(session_id)
-                full_reply = ""  # 收集完整回复
+                full_reply = ""
                 
                 try:
-                    async for chunk in chat_agent.achat(req.message, session_id, stream=True):
+                    first_chunk = json.dumps({"session_id": session_id}, ensure_ascii=False)
+                    yield f"data: {first_chunk}\n\n"
+
+                    # ✅ 传入历史记录
+                    async for chunk in chat_agent.achat(
+                        req.message, 
+                        session_id, 
+                        chat_history=chat_history,  # 传入历史
+                        stream=True
+                    ):
                         full_reply += chunk
                         yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
                     
-                    # ✅ 流式结束后保存 AI 回复
                     ChatService.save_message(
                         db=db,
                         session_id=session_id,
                         role="assistant",
-                        content=full_reply
+                        content=full_reply,
+                        user_id=final_user_id
                     )
                     
                     yield "data: [DONE]\n\n"
@@ -176,15 +207,21 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
             return StreamingResponse(generate(), media_type="text/event-stream")
         else:
             reply = ""
-            async for content in chat_agent.achat(req.message, session_id, stream=False):
+            # ✅ 传入历史记录
+            async for content in chat_agent.achat(
+                req.message, 
+                session_id, 
+                chat_history=chat_history,  # 传入历史
+                stream=False
+            ):
                 reply = content
             
-            # ✅ 保存 AI 回复
             ChatService.save_message(
                 db=db,
                 session_id=session_id,
                 role="assistant",
-                content=reply
+                content=reply,
+                user_id=final_user_id
             )
             
             return ChatResponse(
@@ -197,6 +234,8 @@ async def chat(req: ChatRequest, db: Session = Depends(get_db)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.post("/travelapi/chat/stream")
 async def chat_stream(req: ChatRequest):
@@ -320,85 +359,85 @@ async def call_tool_directly(tool_name: str, arguments: Dict[str, Any]):
 
 
 
+# 旧接口
+# # ===================== 新增：计划获取接口 =====================
 
-# ===================== 新增：计划获取接口 =====================
-
-@app.get("/travelapi/plan/{session_id}", response_model=PlanResponse)
-async def get_plan(session_id: str):
-    """
-    获取指定 session 的旅行计划
+# @app.get("/travelapi/plan/{session_id}", response_model=PlanResponse)
+# async def get_plan(session_id: str):
+#     """
+#     获取指定 session 的旅行计划
     
-    Args:
-        session_id: 会话ID
+#     Args:
+#         session_id: 会话ID
         
-    Returns:
-        旅行计划数据
-    """
-    plan = redis_service.get_plan(session_id)
+#     Returns:
+#         旅行计划数据
+#     """
+#     plan = redis_service.get_plan(session_id)
     
-    if plan:
-        return PlanResponse(
-            success=True,
-            session_id=session_id,
-            data=plan,
-            message="获取成功"
-        )
-    else:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Plan not found for session: {session_id}"
-        )
+#     if plan:
+#         return PlanResponse(
+#             success=True,
+#             session_id=session_id,
+#             data=plan,
+#             message="获取成功"
+#         )
+#     else:
+#         raise HTTPException(
+#             status_code=404, 
+#             detail=f"Plan not found for session: {session_id}"
+#         )
 
 
-@app.get("/travelapi/plan/{session_id}/status", response_model=PlanStatusResponse)
-async def get_plan_status(session_id: str):
-    """
-    获取计划生成状态（用于前端轮询）
+# @app.get("/travelapi/plan/{session_id}/status", response_model=PlanStatusResponse)
+# async def get_plan_status(session_id: str):
+#     """
+#     获取计划生成状态（用于前端轮询）
     
-    Args:
-        session_id: 会话ID
+#     Args:
+#         session_id: 会话ID
         
-    Returns:
-        状态信息
-    """
-    status = redis_service.get_plan_status(session_id)
+#     Returns:
+#         状态信息
+#     """
+#     status = redis_service.get_plan_status(session_id)
     
-    if status:
-        return PlanStatusResponse(
-            session_id=session_id,
-            status=status.get("status", "unknown"),
-            progress=status.get("progress", 0),
-            message=status.get("message", "")
-        )
-    else:
-        return PlanStatusResponse(
-            session_id=session_id,
-            status="not_found",
-            progress=0,
-            message="该会话没有正在进行的计划生成任务"
-        )
+#     if status:
+#         return PlanStatusResponse(
+#             session_id=session_id,
+#             status=status.get("status", "unknown"),
+#             progress=status.get("progress", 0),
+#             message=status.get("message", "")
+#         )
+#     else:
+#         return PlanStatusResponse(
+#             session_id=session_id,
+#             status="not_found",
+#             progress=0,
+#             message="该会话没有正在进行的计划生成任务"
+#         )
 
 
-@app.delete("/travelapi/plan/{session_id}")
-async def delete_plan(session_id: str):
-    """删除指定 session 的旅行计划"""
-    success = redis_service.delete_plan(session_id)
+# @app.delete("/travelapi/plan/{session_id}")
+# async def delete_plan(session_id: str):
+#     """删除指定 session 的旅行计划"""
+#     success = redis_service.delete_plan(session_id)
     
-    if success:
-        return {"success": True, "message": f"Plan deleted: {session_id}"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to delete plan")
+#     if success:
+#         return {"success": True, "message": f"Plan deleted: {session_id}"}
+#     else:
+#         raise HTTPException(status_code=500, detail="Failed to delete plan")
 
 
-@app.get("/travelapi/plans")
-async def list_plans(limit: int = 100):
-    """列出所有计划（管理接口）"""
-    plans = redis_service.list_plans(limit=limit)
-    return {
-        "success": True,
-        "count": len(plans),
-        "plans": plans
-    }
+# @app.get("/travelapi/plans")
+# async def list_plans(limit: int = 100):
+#     """列出所有计划（管理接口）"""
+#     plans = redis_service.list_plans(limit=limit)
+#     return {
+#         "success": True,
+#         "count": len(plans),
+#         "plans": plans
+#     }
 
 
 

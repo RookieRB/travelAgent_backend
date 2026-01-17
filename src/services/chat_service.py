@@ -41,8 +41,33 @@ class ChatService:
         user_id: Optional[str] = None
     ) -> ChatMessage:
         """保存消息"""
-        ChatService.get_or_create_session(db, session_id, user_id)
+        session = ChatService.get_or_create_session(db, session_id, user_id)
         
+
+         # ✅ 只保存有内容的消息
+        if not content or not content.strip():
+            print(f"⚠️ 跳过保存空消息: role={role}")
+            return
+        
+        # ✅ 只保存 user 和 assistant 的最终消息
+        if role not in ["user", "assistant"]:
+            print(f"⚠️ 跳过保存非对话消息: role={role}")
+            return
+
+        if not session:
+          session = ChatSession(id=session_id, user_id=user_id, title="新对话")
+          db.add(session)
+        else:
+          # 🔥 关键：如果 session 之前没绑定用户，现在有了 user_id，则绑定上去
+          if session.user_id is None and user_id is not None:
+              session.user_id = user_id
+        
+          # 更新最后更新时间
+          session.updated_at = datetime.now()
+
+
+
+
         message = ChatMessage(
             session_id=session_id,
             role=role,
@@ -80,7 +105,7 @@ class ChatService:
     ) -> List[Dict[str, Any]]:
         """获取会话历史（前端格式）"""
         messages = ChatService.get_session_messages(db, session_id)
-        
+
         result = []
         for msg in messages:
             result.append({

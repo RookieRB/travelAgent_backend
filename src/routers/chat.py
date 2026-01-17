@@ -31,7 +31,8 @@ async def get_chat_history(
     返回格式适配前端展示
     """
     messages = ChatService.get_session_history_for_frontend(db, session_id)
-    
+  
+
     return ChatHistoryResponse(
         session_id=session_id,
         messages=messages

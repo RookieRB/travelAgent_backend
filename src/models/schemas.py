@@ -160,88 +160,176 @@ class PlanningRules(BaseModel):
                 items.append(item.item)
         items.extend(self.avoid)
         return [i for i in items if i]
-# --- Final Output ---
-class ItineraryItem(BaseModel):
-    time: str
-    poi: str
-    duration: str
-    transport: Optional[str] = None
-    notes: Optional[str] = None
-
-class DailySchedule(BaseModel):
-    day: int
-    schedule: List[ItineraryItem]
-
-class TravelPlanResult(BaseModel):
-    overview: str
-    days: List[DailySchedule]
-    map_routes: Optional[List[Any]] = None
-    tips: Dict[str, List[str]]
 
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
 
 
-class ChatRequest(BaseModel):
-    session_id: Optional[str] = None
-    message: str
+# # --- Final Output ---
+# class ItineraryItem(BaseModel):
+#     time: str
+#     poi: str
+#     duration: str
+#     transport: Optional[str] = None
+#     notes: Optional[str] = None
+
+# class DailySchedule(BaseModel):
+#     day: int
+#     schedule: List[ItineraryItem]
+
+# class TravelPlanResult(BaseModel):
+#     overview: str
+#     days: List[DailySchedule]
+#     map_routes: Optional[List[Any]] = None
+#     tips: Dict[str, List[str]]
 
 
-class ChatResponse(BaseModel):
-    session_id: str
-    action: str
-    reply: str
-    missing_fields: List[str] = []
-    plan: Optional[TravelPlanResult] = None
-    messages: List[ChatMessage] = []
+# class ChatMessage(BaseModel):
+#     role: str
+#     content: str
+
+
+# class ChatRequest(BaseModel):
+#     session_id: Optional[str] = None
+#     message: str
+
+
+# class ChatResponse(BaseModel):
+#     session_id: str
+#     action: str
+#     reply: str
+#     missing_fields: List[str] = []
+#     plan: Optional[TravelPlanResult] = None
+#     messages: List[ChatMessage] = []
+
+
+# class ScheduleItem(BaseModel):
+#     """行程项 - 每个活动/景点"""
+#     time: str = ""
+#     poi: str = ""  # 景点名称，必填
+#     activity: Optional[str] = ""
+#     duration: str = ""  # 时长，必填
+#     tips: Optional[str] = ""
+#     route_info: Optional[str] = ""
+    
+#     class Config:
+#         extra = "allow"
+
+
+# class DayPlan(BaseModel):
+#     """每日行程"""
+#     day: Union[int, str] = 1
+#     date: Optional[str] = ""
+#     theme: Optional[str] = ""
+#     weather_tip: Optional[str] = ""
+#     schedule: List[ScheduleItem] = Field(default_factory=list)
+    
+#     class Config:
+#         extra = "allow"
+
+
+# class TravelTips(BaseModel):
+#     """旅行建议"""
+#     transport: Optional[str] = ""
+#     food: Optional[str] = ""
+#     accommodation: Optional[str] = ""
+#     budget: Optional[str] = ""
+#     avoid: List[str] = Field(default_factory=list)
+#     replaceable: List[str] = Field(default_factory=list)
+    
+#     class Config:
+#         extra = "allow"
+
+
+# class TravelPlanResult(BaseModel):
+#     """最终行程结果"""
+#     overview: str = "精彩行程"
+#     highlights: List[str] = Field(default_factory=list)
+#     days: List[DayPlan] = Field(default_factory=list)
+#     tips: TravelTips = Field(default_factory=TravelTips)
+    
+#     class Config:
+#         extra = "allow"
+
+
+
+
+
+
+class MealRecommend(BaseModel):
+    """用餐推荐"""
+    recommend: str = ""
+    location: str = ""
+
+
+class DayMeals(BaseModel):
+    """每日用餐"""
+    breakfast: Optional[MealRecommend] = None
+    lunch: Optional[MealRecommend] = None
+    dinner: Optional[MealRecommend] = None
 
 
 class ScheduleItem(BaseModel):
-    """行程项 - 每个活动/景点"""
+    """行程项"""
     time: str = ""
-    poi: str = ""  # 景点名称，必填
-    activity: Optional[str] = ""
-    duration: str = ""  # 时长，必填
-    tips: Optional[str] = ""
-    route_info: Optional[str] = ""
-    
-    class Config:
-        extra = "allow"
+    poi: str = ""
+    activity: str = ""
+    duration: str = ""
+    ticket: str = ""
+    tips: str = ""
 
 
 class DayPlan(BaseModel):
-    """每日行程"""
-    day: Union[int, str] = 1
-    date: Optional[str] = ""
-    theme: Optional[str] = ""
-    weather_tip: Optional[str] = ""
+    """每日计划"""
+    day: int = 0
+    date: str = ""
+    theme: str = ""
     schedule: List[ScheduleItem] = Field(default_factory=list)
-    
-    class Config:
-        extra = "allow"
+    meals: Optional[DayMeals] = None
 
 
-class TravelTips(BaseModel):
-    """旅行建议"""
-    transport: Optional[str] = ""
-    food: Optional[str] = ""
-    accommodation: Optional[str] = ""
-    budget: Optional[str] = ""
-    avoid: List[str] = Field(default_factory=list)
-    replaceable: List[str] = Field(default_factory=list)
-    
-    class Config:
-        extra = "allow"
+class TransportTips(BaseModel):
+    """交通建议"""
+    arrival: str = ""
+    local: List[str] = Field(default_factory=list)
+
+
+class AccommodationTips(BaseModel):
+    """住宿建议"""
+    area: str = ""
+    reasons: List[str] = Field(default_factory=list)
+    nearby: List[str] = Field(default_factory=list)
+
+
+class FoodTips(BaseModel):
+    """美食建议"""
+    specialties: List[str] = Field(default_factory=list)
+    streets: List[str] = Field(default_factory=list)
+    restaurants: List[str] = Field(default_factory=list)
+
+
+class AvoidItem(BaseModel):
+    """避坑事项"""
+    item: str = ""
+    reason: str = ""
+
+
+class PlanTips(BaseModel):
+    """行程贴士"""
+    transportation: Optional[TransportTips] = None
+    accommodation: Optional[AccommodationTips] = None
+    food: Optional[FoodTips] = None
+    avoid: List[AvoidItem] = Field(default_factory=list)
+    practical: List[str] = Field(default_factory=list)
 
 
 class TravelPlanResult(BaseModel):
-    """最终行程结果"""
-    overview: str = "精彩行程"
+    """旅行计划结果"""
+    destination: str = ""
+    overview: str = ""
     highlights: List[str] = Field(default_factory=list)
-    days: List[DayPlan] = Field(default_factory=list)
-    tips: TravelTips = Field(default_factory=TravelTips)
+    reference_routes: List[str] = Field(default_factory=list)
+    days: List[Dict[str, Any]] = Field(default_factory=list)  # 保持灵活
+    tips: Dict[str, Any] = Field(default_factory=dict)  # 保持灵活
     
     class Config:
         extra = "allow"

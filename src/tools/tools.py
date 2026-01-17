@@ -10,8 +10,12 @@ from pydantic import BaseModel, Field, PrivateAttr
 from .http import McpStreamableHttpClient
 
 from src.utils.context import get_session_id
-from src.services.redis_service import redis_service
 
+
+from src.models.schemas import UserProfile
+from src.utils.token_budget import TokenBudget
+from src.agents.state import AgentState
+from src.tools.image_ocr import ImageOCRTool
 
 TYPECODE_MAP = {
     # 风景名胜 110000
@@ -301,30 +305,375 @@ def reset_amap_mcp_client():
 class XiaohongshuSearchSchema(BaseModel):
     keyword: str = Field(description="搜索关键词")
 
+#=======================
+# class XiaohongshuSearchTool(BaseTool):
+#     """小红书搜索工具 - 通过MCP获取笔记列表和详情"""
+#     name: str = "xiaohongshu_search"
+#     description: str = "通过MCP服务搜索小红书笔记，获取笔记详细内容"
+#     args_schema: Type[BaseModel] = XiaohongshuSearchSchema
+
+#     _mcp: McpStreamableHttpClient = PrivateAttr()
+#     _debug: bool = PrivateAttr()
+#     _detail_limit: int = PrivateAttr()
+
+#     def __init__(self, **data: Any):
+#         super().__init__(**data)
+
+#         self._debug = _env_bool("XHS_DEBUG", False)
+#         self._detail_limit = int(os.getenv("XHS_DETAIL_LIMIT", "2"))
+        
+#         endpoint = os.getenv("XHS_MCP_URL", "http://localhost:18060/mcp")
+#         timeout_s = float(os.getenv("XHS_MCP_TIMEOUT_S", "60"))
+        
+#         self._mcp = McpStreamableHttpClient(endpoint=endpoint, timeout_s=timeout_s)
+        
+#         if self._debug:
+#             print(f"[XHS] Endpoint: {endpoint}, Detail limit: {self._detail_limit}")
+
+#     def _dprint(self, msg: str, payload: Any = None) -> None:
+#         if not self._debug:
+#             return
+#         if payload is None:
+#             print(f"[XHS] {msg}")
+#         else:
+#             try:
+#                 s = json.dumps(payload, ensure_ascii=False)
+#                 if len(s) > 500:
+#                     s = s[:500] + "..."
+#             except Exception:
+#                 s = str(payload)[:500]
+#             print(f"[XHS] {msg}: {s}")
+
+#     def _run(self, keyword: str) -> str:
+#         """执行搜索并获取笔记详情"""
+#         try:
+#             self._dprint("搜索关键词", keyword)
+
+#             search_result = self._mcp.call_tool("search_feeds", {"keyword": keyword, "filters": {"sort_by": "最多点赞"}})
+#             self._dprint("搜索结果类型", type(search_result).__name__)
+
+#             feeds = self._extract_feeds(search_result)
+#             self._dprint(f"找到 {len(feeds)} 条笔记")
+            
+#             notes_with_details = []
+#             for idx, feed in enumerate(feeds[:self._detail_limit]):
+#                 feed_id = feed.get("id")
+#                 xsec_token = feed.get("xsecToken")
+#                 display_title = feed.get("noteCard", {}).get("displayTitle", "")
+                
+#                 if not feed_id or not xsec_token:
+#                     self._dprint(f"跳过第{idx+1}条: 缺少id或xsecToken")
+#                     continue
+
+#                 self._dprint(f"获取第{idx+1}条详情", {"feed_id": feed_id, "title": display_title})
+
+#                 try:
+#                     detail_result = self._mcp.call_tool("get_feed_detail", {
+#                         "feed_id": feed_id,
+#                         "xsec_token": xsec_token
+#                     })
+                    
+#                     note_info = self._extract_note_detail(detail_result)
+#                     note_info["rank"] = idx + 1
+#                     note_info["feed_id"] = feed_id
+                    
+#                     if not note_info.get("title") and display_title:
+#                         note_info["title"] = display_title
+                    
+#                     notes_with_details.append(note_info)
+#                     self._dprint(f"第{idx+1}条详情获取成功", {"title": note_info.get("title", "")[:30]})
+
+#                 except Exception as e:
+#                     self._dprint(f"第{idx+1}条详情获取失败", str(e))
+#                     notes_with_details.append({
+#                         "rank": idx + 1,
+#                         "feed_id": feed_id,
+#                         "title": display_title,
+#                         "desc": "",
+#                         "error": str(e)
+#                     })
+
+#             result = {
+#                 "keyword": keyword,
+#                 "total_found": len(feeds),
+#                 "detail_fetched": len(notes_with_details),
+#                 "notes": notes_with_details
+#             }
+
+#             return json.dumps(result, ensure_ascii=False, indent=2)
+
+#         except Exception as e:
+#             self._dprint("搜索异常", str(e))
+#             import traceback
+#             traceback.print_exc()
+#             return json.dumps({
+#                 "error": str(e),
+#                 "keyword": keyword
+#             }, ensure_ascii=False)
+
+#     def _extract_feeds(self, search_result: Any) -> List[Dict[str, Any]]:
+#         feeds = []
+#         if isinstance(search_result, dict):
+#             raw_feeds = search_result.get("feeds", [])
+#             for feed in raw_feeds:
+#                 if not isinstance(feed, dict):
+#                     continue
+#                 model_type = feed.get("modelType", "")
+#                 if model_type != "note":
+#                     continue
+#                 if feed.get("id") and feed.get("xsecToken"):
+#                     feeds.append(feed)
+#         return feeds
+
+#     def _extract_note_detail(self, detail_result: Any) -> Dict[str, Any]:
+#         note_info = {
+#             "title": "",
+#             "desc": "",
+#             "author": "",
+#             "likes": 0,
+#             "comments_count": 0
+#         }
+        
+#         if not isinstance(detail_result, dict):
+#             return note_info
+            
+#         data = detail_result.get("data", {})
+#         note = data.get("note", {})
+        
+#         if not note:
+#             note = detail_result.get("note", {})
+        
+#         if isinstance(note, dict):
+#             note_info["title"] = note.get("title", "")
+#             note_info["desc"] = note.get("desc", "")
+            
+#             user = note.get("user", {})
+#             if isinstance(user, dict):
+#                 note_info["author"] = user.get("nickname", "") or user.get("name", "")
+            
+#             interact_info = note.get("interactInfo", {})
+#             if isinstance(interact_info, dict):
+#                 note_info["likes"] = interact_info.get("likedCount", 0) or interact_info.get("liked_count", 0)
+#                 note_info["comments_count"] = interact_info.get("commentCount", 0) or interact_info.get("comment_count", 0)
+        
+#         return note_info
+
+
+# class XiaohongshuSearchTool(BaseTool):
+#     """小红书搜索工具 - 通过MCP获取笔记列表和详情"""
+#     name: str = "xiaohongshu_search"
+#     description: str = "通过MCP服务搜索小红书笔记，获取笔记详细内容"
+#     args_schema: Type[BaseModel] = XiaohongshuSearchSchema
+
+#     _mcp: McpStreamableHttpClient = PrivateAttr()
+#     _debug: bool = PrivateAttr()
+#     _detail_limit: int = PrivateAttr()
+#     _min_desc_length: int = PrivateAttr()  # 新增：最小描述长度
+
+#     def __init__(self, **data: Any):
+#         super().__init__(**data)
+
+#         self._debug = _env_bool("XHS_DEBUG", False)
+#         self._detail_limit = int(os.getenv("XHS_DETAIL_LIMIT", "2"))
+#         self._min_desc_length = int(os.getenv("XHS_MIN_DESC_LENGTH", "100"))  # 默认50字
+        
+#         endpoint = os.getenv("XHS_MCP_URL", "http://localhost:18060/mcp")
+#         timeout_s = float(os.getenv("XHS_MCP_TIMEOUT_S", "60"))
+        
+#         self._mcp = McpStreamableHttpClient(endpoint=endpoint, timeout_s=timeout_s)
+        
+#         if self._debug:
+#             print(f"[XHS] Endpoint: {endpoint}, Detail limit: {self._detail_limit}, Min desc: {self._min_desc_length}")
+
+#     def _dprint(self, msg: str, payload: Any = None) -> None:
+#         if not self._debug:
+#             return
+#         if payload is None:
+#             print(f"[XHS] {msg}")
+#         else:
+#             try:
+#                 s = json.dumps(payload, ensure_ascii=False)
+#                 if len(s) > 500:
+#                     s = s[:500] + "..."
+#             except Exception:
+#                 s = str(payload)[:500]
+#             print(f"[XHS] {msg}: {s}")
+
+#     def _run(self, keyword: str) -> str:
+#         """执行搜索并获取笔记详情"""
+#         try:
+#             self._dprint("搜索关键词", keyword)
+
+#             search_result = self._mcp.call_tool("search_feeds", {"keyword": keyword})
+#             self._dprint("搜索结果类型", type(search_result).__name__)
+
+#             feeds = self._extract_feeds(search_result)
+#             self._dprint(f"找到 {len(feeds)} 条笔记")
+            
+#             notes_with_details = []
+#             skipped_count = 0  # 记录跳过的笔记数
+#             feed_idx = 0  # 当前处理的feed索引
+            
+#             # 使用while循环，确保获取足够数量的有效笔记
+#             while len(notes_with_details) < self._detail_limit and feed_idx < len(feeds):
+#                 feed = feeds[feed_idx]
+#                 feed_idx += 1
+                
+#                 feed_id = feed.get("id")
+#                 xsec_token = feed.get("xsecToken")
+#                 display_title = feed.get("noteCard", {}).get("displayTitle", "")
+                
+#                 if not feed_id or not xsec_token:
+#                     self._dprint(f"跳过第{feed_idx}条: 缺少id或xsecToken")
+#                     skipped_count += 1
+#                     continue
+
+#                 self._dprint(f"获取第{feed_idx}条详情", {"feed_id": feed_id, "title": display_title})
+
+#                 try:
+#                     detail_result = self._mcp.call_tool("get_feed_detail", {
+#                         "feed_id": feed_id,
+#                         "xsec_token": xsec_token
+#                     })
+                    
+#                     note_info = self._extract_note_detail(detail_result)
+                    
+#                     # ========== 新增：描述长度校验 ==========
+#                     desc = note_info.get("desc", "")
+#                     desc_length = len(desc)
+                    
+#                     if desc_length < self._min_desc_length:
+#                         self._dprint(
+#                             f"跳过第{feed_idx}条: 描述过短", 
+#                             {"length": desc_length, "min_required": self._min_desc_length, "title": display_title[:30]}
+#                         )
+#                         print("当前获取的攻略字数太少，已跳过")
+#                         skipped_count += 1 
+#                         continue
+#                     # ========================================
+                    
+#                     note_info["rank"] = len(notes_with_details) + 1
+#                     note_info["feed_id"] = feed_id
+#                     note_info["original_index"] = feed_idx  # 记录原始索引位置
+                    
+#                     if not note_info.get("title") and display_title:
+#                         note_info["title"] = display_title
+                    
+#                     notes_with_details.append(note_info)
+#                     self._dprint(
+#                         f"✓ 第{len(notes_with_details)}条有效笔记", 
+#                         {"title": note_info.get("title", "")[:30], "desc_length": desc_length}
+#                     )
+
+#                 except Exception as e:
+#                     self._dprint(f"第{feed_idx}条详情获取失败", str(e))
+#                     skipped_count += 1
+#                     # 失败的笔记跳过，继续尝试下一条
+
+#             result = {
+#                 "keyword": keyword,
+#                 "total_found": len(feeds),
+#                 "detail_fetched": len(notes_with_details),
+#                 "skipped_count": skipped_count,  # 新增：跳过的笔记数
+#                 "notes": notes_with_details
+#             }
+
+#             return json.dumps(result, ensure_ascii=False, indent=2)
+
+#         except Exception as e:
+#             self._dprint("搜索异常", str(e))
+#             import traceback
+#             traceback.print_exc()
+#             return json.dumps({
+#                 "error": str(e),
+#                 "keyword": keyword
+#             }, ensure_ascii=False)
+
+#     def _extract_feeds(self, search_result: Any) -> List[Dict[str, Any]]:
+#         feeds = []
+#         if isinstance(search_result, dict):
+#             raw_feeds = search_result.get("feeds", [])
+#             for feed in raw_feeds:
+#                 if not isinstance(feed, dict):
+#                     continue
+#                 model_type = feed.get("modelType", "")
+#                 if model_type != "note":
+#                     continue
+#                 if feed.get("id") and feed.get("xsecToken"):
+#                     feeds.append(feed)
+#         return feeds
+
+#     def _extract_note_detail(self, detail_result: Any) -> Dict[str, Any]:
+#         note_info = {
+#             "title": "",
+#             "desc": "",
+#             "author": "",
+#             "likes": 0,
+#             "comments_count": 0
+#         }
+        
+#         if not isinstance(detail_result, dict):
+#             return note_info
+            
+#         data = detail_result.get("data", {})
+#         note = data.get("note", {})
+        
+#         if not note:
+#             note = detail_result.get("note", {})
+        
+#         if isinstance(note, dict):
+#             note_info["title"] = note.get("title", "")
+#             note_info["desc"] = note.get("desc", "")
+            
+#             user = note.get("user", {})
+#             if isinstance(user, dict):
+#                 note_info["author"] = user.get("nickname", "") or user.get("name", "")
+            
+#             interact_info = note.get("interactInfo", {})
+#             if isinstance(interact_info, dict):
+#                 note_info["likes"] = interact_info.get("likedCount", 0) or interact_info.get("liked_count", 0)
+#                 note_info["comments_count"] = interact_info.get("commentCount", 0) or interact_info.get("comment_count", 0)
+        
+#         return note_info
+
 
 class XiaohongshuSearchTool(BaseTool):
-    """小红书搜索工具 - 通过MCP获取笔记列表和详情"""
+    """小红书搜索工具 - 支持图片OCR识别"""
+    
     name: str = "xiaohongshu_search"
-    description: str = "通过MCP服务搜索小红书笔记，获取笔记详细内容"
+    description: str = "搜索小红书笔记，获取详细内容（包括图片文字识别）"
     args_schema: Type[BaseModel] = XiaohongshuSearchSchema
 
-    _mcp: McpStreamableHttpClient = PrivateAttr()
+    _mcp: Any = PrivateAttr()
     _debug: bool = PrivateAttr()
     _detail_limit: int = PrivateAttr()
+    _min_desc_length: int = PrivateAttr()
+    _enable_ocr: bool = PrivateAttr()  # 新增：是否启用OCR
+    _ocr_tool: ImageOCRTool = PrivateAttr()  # 新增：OCR工具
 
     def __init__(self, **data: Any):
         super().__init__(**data)
 
         self._debug = _env_bool("XHS_DEBUG", False)
         self._detail_limit = int(os.getenv("XHS_DETAIL_LIMIT", "2"))
+        self._min_desc_length = int(os.getenv("XHS_MIN_DESC_LENGTH", "100"))
+        self._enable_ocr = _env_bool("XHS_ENABLE_OCR", True)  # 默认开启OCR
         
         endpoint = os.getenv("XHS_MCP_URL", "http://localhost:18060/mcp")
         timeout_s = float(os.getenv("XHS_MCP_TIMEOUT_S", "60"))
         
+        # 初始化 MCP 客户端
         self._mcp = McpStreamableHttpClient(endpoint=endpoint, timeout_s=timeout_s)
         
+        # 初始化 OCR 工具
+        if self._enable_ocr:
+            self._ocr_tool = ImageOCRTool(
+                max_images=int(os.getenv("XHS_OCR_MAX_IMAGES", "3")),
+                debug=self._debug
+            )
+        
         if self._debug:
-            print(f"[XHS] Endpoint: {endpoint}, Detail limit: {self._detail_limit}")
+            print(f"[XHS] OCR enabled: {self._enable_ocr}, Detail limit: {self._detail_limit}")
 
     def _dprint(self, msg: str, payload: Any = None) -> None:
         if not self._debug:
@@ -333,7 +682,7 @@ class XiaohongshuSearchTool(BaseTool):
             print(f"[XHS] {msg}")
         else:
             try:
-                s = json.dumps(payload, ensure_ascii=False)
+                s = json.dumps(payload, ensure_ascii=False) if isinstance(payload, (dict, list)) else str(payload)
                 if len(s) > 500:
                     s = s[:500] + "..."
             except Exception:
@@ -341,58 +690,83 @@ class XiaohongshuSearchTool(BaseTool):
             print(f"[XHS] {msg}: {s}")
 
     def _run(self, keyword: str) -> str:
-        """执行搜索并获取笔记详情"""
+        """执行搜索并获取笔记详情（含图片OCR）"""
         try:
             self._dprint("搜索关键词", keyword)
 
-            search_result = self._mcp.call_tool("search_feeds", {"keyword": keyword, "filters": {"sort_by": "最多点赞"}})
-            self._dprint("搜索结果类型", type(search_result).__name__)
-
+            search_result = self._mcp.call_tool("search_feeds", {"keyword": keyword})
             feeds = self._extract_feeds(search_result)
             self._dprint(f"找到 {len(feeds)} 条笔记")
             
             notes_with_details = []
-            for idx, feed in enumerate(feeds[:self._detail_limit]):
+            skipped_count = 0
+            feed_idx = 0
+            
+            while len(notes_with_details) < self._detail_limit and feed_idx < len(feeds):
+                feed = feeds[feed_idx]
+                feed_idx += 1
+                
                 feed_id = feed.get("id")
                 xsec_token = feed.get("xsecToken")
                 display_title = feed.get("noteCard", {}).get("displayTitle", "")
                 
                 if not feed_id or not xsec_token:
-                    self._dprint(f"跳过第{idx+1}条: 缺少id或xsecToken")
+                    skipped_count += 1
                     continue
 
-                self._dprint(f"获取第{idx+1}条详情", {"feed_id": feed_id, "title": display_title})
+                self._dprint(f"获取第{feed_idx}条详情", {"feed_id": feed_id, "title": display_title})
 
                 try:
+                    # 获取详情
                     detail_result = self._mcp.call_tool("get_feed_detail", {
                         "feed_id": feed_id,
                         "xsec_token": xsec_token
                     })
                     
+                    # 提取基本信息
                     note_info = self._extract_note_detail(detail_result)
-                    note_info["rank"] = idx + 1
+                    
+                    # ========== 图片OCR识别 ==========
+                    if self._enable_ocr:
+                        ocr_text = self._recognize_images(detail_result)
+                        if ocr_text:
+                            # 合并OCR内容到描述中
+                            original_desc = note_info.get("desc", "")
+                            note_info["desc"] = self._merge_desc_and_ocr(original_desc, ocr_text)
+                            note_info["has_ocr"] = True
+                            self._dprint(f"OCR识别完成", {"ocr_length": len(ocr_text)})
+                    # ==================================
+                    
+                    # 描述长度校验（OCR后再检查）
+                    desc = note_info.get("desc", "")
+                    desc_length = len(desc)
+                    
+                    if desc_length < self._min_desc_length:
+                        self._dprint(f"跳过: 描述过短", {"length": desc_length})
+                        print(f"⚠️ 当前攻略字数太少({desc_length}字)，已跳过")
+                        skipped_count += 1
+                        continue
+                    
+                    note_info["rank"] = len(notes_with_details) + 1
                     note_info["feed_id"] = feed_id
+                    note_info["original_index"] = feed_idx
                     
                     if not note_info.get("title") and display_title:
                         note_info["title"] = display_title
                     
                     notes_with_details.append(note_info)
-                    self._dprint(f"第{idx+1}条详情获取成功", {"title": note_info.get("title", "")[:30]})
+                    self._dprint(f"✓ 有效笔记", {"title": note_info.get("title", "")[:30], "desc_length": desc_length})
 
                 except Exception as e:
-                    self._dprint(f"第{idx+1}条详情获取失败", str(e))
-                    notes_with_details.append({
-                        "rank": idx + 1,
-                        "feed_id": feed_id,
-                        "title": display_title,
-                        "desc": "",
-                        "error": str(e)
-                    })
+                    self._dprint(f"详情获取失败", str(e))
+                    skipped_count += 1
 
             result = {
                 "keyword": keyword,
                 "total_found": len(feeds),
                 "detail_fetched": len(notes_with_details),
+                "skipped_count": skipped_count,
+                "ocr_enabled": self._enable_ocr,
                 "notes": notes_with_details
             }
 
@@ -402,42 +776,94 @@ class XiaohongshuSearchTool(BaseTool):
             self._dprint("搜索异常", str(e))
             import traceback
             traceback.print_exc()
-            return json.dumps({
-                "error": str(e),
-                "keyword": keyword
-            }, ensure_ascii=False)
+            return json.dumps({"error": str(e), "keyword": keyword}, ensure_ascii=False)
+
+    def _recognize_images(self, detail_result: Dict) -> str:
+        """
+        识别笔记中的图片
+        
+        Args:
+            detail_result: get_feed_detail 的原始返回数据
+            
+        Returns:
+            OCR识别的文字内容
+        """
+        if not self._enable_ocr:
+            return ""
+        
+        try:
+            # 提取 imageList
+            data = detail_result.get("data", {})
+            note = data.get("note", {}) or detail_result.get("note", {})
+            image_list = note.get("imageList", [])
+            
+            if not image_list:
+                self._dprint("无图片列表")
+                return ""
+            
+            self._dprint(f"发现 {len(image_list)} 张图片，开始OCR识别")
+            
+            # 调用 OCR 工具
+            ocr_text = self._ocr_tool.recognize_from_note_detail(detail_result)
+            
+            return ocr_text
+            
+        except Exception as e:
+            self._dprint(f"OCR识别失败", str(e))
+            return ""
+    
+    def _merge_desc_and_ocr(self, original_desc: str, ocr_text: str) -> str:
+        """
+        合并原始描述和OCR内容
+        
+        避免重复内容，智能合并
+        """
+        if not ocr_text:
+            return original_desc
+        
+        if not original_desc:
+            return ocr_text
+        
+        # 简单合并策略：OCR内容追加到末尾
+        # 可以根据需要做更智能的去重
+        merged = f"""{original_desc}
+
+        ---
+        【图片识别内容】
+        {ocr_text}"""
+        
+        return merged
 
     def _extract_feeds(self, search_result: Any) -> List[Dict[str, Any]]:
+        """提取搜索结果中的笔记列表"""
         feeds = []
         if isinstance(search_result, dict):
             raw_feeds = search_result.get("feeds", [])
             for feed in raw_feeds:
                 if not isinstance(feed, dict):
                     continue
-                model_type = feed.get("modelType", "")
-                if model_type != "note":
+                if feed.get("modelType", "") != "note":
                     continue
                 if feed.get("id") and feed.get("xsecToken"):
                     feeds.append(feed)
         return feeds
 
     def _extract_note_detail(self, detail_result: Any) -> Dict[str, Any]:
+        """提取笔记详情"""
         note_info = {
             "title": "",
             "desc": "",
             "author": "",
             "likes": 0,
-            "comments_count": 0
+            "comments_count": 0,
+            "has_ocr": False,
         }
         
         if not isinstance(detail_result, dict):
             return note_info
             
         data = detail_result.get("data", {})
-        note = data.get("note", {})
-        
-        if not note:
-            note = detail_result.get("note", {})
+        note = data.get("note", {}) or detail_result.get("note", {})
         
         if isinstance(note, dict):
             note_info["title"] = note.get("title", "")
@@ -453,6 +879,8 @@ class XiaohongshuSearchTool(BaseTool):
                 note_info["comments_count"] = interact_info.get("commentCount", 0) or interact_info.get("comment_count", 0)
         
         return note_info
+
+
 
 
 # ============ 天气查询工具 ============
@@ -1538,36 +1966,284 @@ class KeywordSearchTool(BaseTool):
 
 # ============ 旅行计划生成工具 ============
 
+# class TravelPlanSchema(BaseModel):
+#     destination: str = Field(description="目的地城市")
+#     days: int = Field(description="旅行天数")
+#     origin: str = Field(default="", description="出发城市")
+#     date_range: str = Field(default="", description="出行日期范围")
+#     group_type: str = Field(default="", description="出行人群类型：家庭/情侣/朋友/独自")
+#     preferences: List[str] = Field(default_factory=list, description="偏好：美食/购物/自然/历史/网红打卡等")
+#     budget: str = Field(default="", description="预算范围：经济/中等/高端")
+#     max_searches: int = Field(default=2, description="最大搜索次数，控制搜索循环次数")
+#     skip_map: bool = Field(default=False, description="是否跳过地图路线验证")
+#     include_weather: bool = Field(default=True, description="是否查询天气信息")
+
+# class TravelPlanTool(BaseTool):
+#     """生成完整的旅行计划"""
+#     name: str = "generate_travel_plan"
+#     description: str = """根据用户需求生成完整的旅行计划。
+#     工作流程：
+#     1. 搜索小红书获取目的地攻略（可循环多次直到信息充足）
+#     2. 总结提取规划规则
+#     3. 查询目的地天气（可选）
+#     4. 生成详细行程
+#     5. 验证交通路线（可选）
+#     6. 润色输出最终计划
+
+#     必需参数：destination（目的地）、days（天数）
+#     """
+#     args_schema: Type[BaseModel] = TravelPlanSchema
+    
+#     _graph: Any = PrivateAttr(default=None)
+#     _current_session_id: str = PrivateAttr(default="")  # ✅ 存储当前 session_id
+#     def __init__(self, travel_graph: Any = None, **data):
+#         super().__init__(**data)
+#         self._graph = travel_graph
+#         self._current_session_id = ""
+
+#     def set_session_id(self, session_id: str):
+#         """外部设置 session_id"""
+#         self._current_session_id = session_id
+    
+#     def _run(
+#         self,
+#         destination: str,
+#         days: int,
+#         origin: str = "",
+#         date_range: str = "",
+#         group_type: str = "",
+#         preferences: List[str] = None,
+#         budget: str = "",
+#         max_searches: int = 2,
+#         skip_map: bool = True,
+#         include_weather: bool = True,
+#     ) -> str:
+#         from src.models.schemas import UserProfile, PlanningRules
+        
+#         # ✅ 获取 session_id（优先级：实例变量 > 上下文变量）
+#         final_session_id = self._current_session_id or get_session_id()
+
+#         print(f"\n{'='*60}")
+#         print(f"🚀 开始生成旅行计划")
+#         print(f"   📍 目的地: {destination}")
+#         print(f"   📅 天数: {days} 天")
+#         print(f"   🏠 出发地: {origin or '未指定'}")
+#         print(f"   👥 出行类型: {group_type or '未指定'}")
+#         print(f"   💝 偏好: {preferences or '无特殊偏好'}")
+#         print(f"   💰 预算: {budget or '中等'}")
+#         print(f"   🔍 最大搜索次数: {max_searches}")
+#         print(f"   🗺️ 地图验证: {'跳过' if skip_map else '启用'}")
+#         print(f"   🌤️ 天气查询: {'启用' if include_weather else '跳过'}")
+#         print(f"{'='*60}\n")
+        
+#         # 校验 session_id
+#         if not final_session_id:
+#             print("⚠️ Warning: session_id 为空，结果将无法缓存")
+
+#         if final_session_id:
+#           redis_service.update_plan_status(
+#               final_session_id, 
+#               status="processing", 
+#               progress=10,
+#               message="开始生成旅行计划..."
+#           )
+
+
+
+#         # 构建用户画像
+#         user_profile = UserProfile(
+#             origin=origin or "未指定",
+#             destination=destination,
+#             days=days,
+#             date_range=date_range or "灵活",
+#             group_type=group_type or "未指定",
+#             preferences=preferences or [],
+#             budget=budget or "中等",
+#         )
+
+#         # 构建初始状态
+#         initial_state = {
+#             "user_profile": user_profile,
+#             # 搜索相关
+#             "session_id": final_session_id,  # ✅ 添加这行
+#             "search_results": None,
+#             "_search_count": 0,
+#             "_max_searches": max_searches,
+#             "_search_queries": [],
+#             # 规划相关
+#             "planning_rules": None,
+#             "draft_plan": None,
+#             "validated_plan": None,
+#             # 可选功能控制
+#             "skip_map_validation": True,
+#             "weather_info": None if include_weather else {"skipped": True},
+#             # 输出
+#             "final_result": None,
+#         }
+
+#         try:
+#             # 检查工作流是否初始化
+#             if self._graph is None:
+
+#               error_msg = "旅行规划工作流未初始化"
+#               if final_session_id:
+#                   redis_service.update_plan_status(
+#                       final_session_id, 
+#                       status="failed", 
+#                       message=error_msg
+#                   )
+#               return self._error_response(
+#                   "旅行规划工作流未初始化，请确保正确传入 travel_graph",
+#                   destination, days
+#               )
+            
+#             # 执行工作流
+#             print("🔄 开始执行工作流...")
+#             print(f"   初始状态 session_id: {initial_state.get('session_id')}")  # ← 验证
+#             final_state = self._graph.invoke(initial_state)
+            
+#             # 提取结果
+#             return self._process_result(final_state, destination, days, user_profile)
+                
+#         except Exception as e:
+#             import traceback
+#             print(f"\n❌ 工作流执行异常:")
+#             traceback.print_exc()
+
+#             if final_session_id:
+#               redis_service.update_plan_status(
+#                   final_session_id, 
+#                   status="failed", 
+#                   message=str(e)
+#               )
+
+#             return self._error_response(str(e), destination, days)
+
+#     def _process_result(
+#         self, 
+#         final_state: dict, 
+#         destination: str, 
+#         days: int,
+#         user_profile: Any
+#     ) -> str:
+#         """处理工作流返回结果"""
+        
+#         result = final_state.get("final_result")
+#         session_id = final_state.get("session_id", "")
+        
+#         if result:
+#             print("\n✅ 旅行计划生成成功!")
+            
+#             # 转换为字典
+#             if hasattr(result, 'model_dump'):
+#                 plan_dict = result.model_dump()
+#             elif hasattr(result, 'dict'):
+#                 plan_dict = result.dict()
+#             else:
+#                 plan_dict = result
+            
+#             # 添加元信息
+#             response = {
+#                 "success": True,
+#                 "session_id": session_id,
+#                 "destination": destination,
+#                 "days": days,
+#                 "user_profile": {
+#                     "origin": user_profile.origin,
+#                     "destination": user_profile.destination,
+#                     "days": user_profile.days,
+#                     "group_type": user_profile.group_type,
+#                     "preferences": user_profile.preferences,
+#                     "budget": user_profile.budget,
+#                 },
+#                 "plan": plan_dict,
+#                 # 包含中间数据（可选，用于调试）
+#                 "meta": {
+#                     "search_count": final_state.get("_search_count", 0),
+#                     "has_weather": final_state.get("weather_info") is not None,
+#                     "has_map_validation": final_state.get("validated_plan") is not None,
+#                 }
+#             }
+            
+#             return json.dumps(response, ensure_ascii=False, indent=2)
+        
+#         else:
+#             # 尝试从其他字段获取部分结果
+#             draft_plan = final_state.get("draft_plan")
+#             validated_plan = final_state.get("validated_plan")
+#             planning_rules = final_state.get("planning_rules")
+            
+#             if validated_plan or draft_plan:
+#                 print("\n⚠️ 未生成最终结果，但有草案数据")
+#                 return json.dumps({
+#                     "success": False,
+#                     "partial": True,
+#                     "destination": destination,
+#                     "days": days,
+#                     "draft_plan": validated_plan or draft_plan,
+#                     "planning_rules": planning_rules.model_dump() if planning_rules and hasattr(planning_rules, 'model_dump') else None,
+#                     "message": "规划未完全完成，返回草案数据"
+#                 }, ensure_ascii=False, indent=2)
+            
+#             elif planning_rules:
+#                 print("\n⚠️ 仅完成搜索总结阶段")
+#                 return json.dumps({
+#                     "success": False,
+#                     "partial": True,
+#                     "destination": destination,
+#                     "days": days,
+#                     "planning_rules": planning_rules.model_dump() if hasattr(planning_rules, 'model_dump') else str(planning_rules),
+#                     "message": "仅完成信息收集，未生成行程"
+#                 }, ensure_ascii=False, indent=2)
+            
+#             else:
+#                 return self._error_response(
+#                     "工作流执行完成但无有效结果",
+#                     destination, days
+#                 )
+
+#     def _error_response(self, error_msg: str, destination: str, days: int) -> str:
+#         """生成错误响应"""
+#         return json.dumps({
+#             "success": False,
+#             "error": error_msg,
+#             "destination": destination,
+#             "days": days,
+#             "suggestion": "请检查网络连接或稍后重试"
+#         }, ensure_ascii=False, indent=2)
+
+
+
 class TravelPlanSchema(BaseModel):
+    """旅行规划参数"""
     destination: str = Field(description="目的地城市")
     days: int = Field(description="旅行天数")
     origin: str = Field(default="", description="出发城市")
     date_range: str = Field(default="", description="出行日期范围")
-    group_type: str = Field(default="", description="出行人群类型：家庭/情侣/朋友/独自")
-    preferences: List[str] = Field(default_factory=list, description="偏好：美食/购物/自然/历史/网红打卡等")
+    group_type: str = Field(default="", description="出行人群类型：family/couple/friends/solo")
+    preferences: List[str] = Field(default_factory=list, description="偏好：美食/购物/自然/历史/拍照等")
     budget: str = Field(default="", description="预算范围：经济/中等/高端")
-    max_searches: int = Field(default=2, description="最大搜索次数，控制搜索循环次数")
-    skip_map: bool = Field(default=False, description="是否跳过地图路线验证")
-    include_weather: bool = Field(default=True, description="是否查询天气信息")
+    max_searches: int = Field(default=3, description="最大搜索轮数")
+
 
 class TravelPlanTool(BaseTool):
     """生成完整的旅行计划"""
     name: str = "generate_travel_plan"
     description: str = """根据用户需求生成完整的旅行计划。
+    
     工作流程：
-    1. 搜索小红书获取目的地攻略（可循环多次直到信息充足）
-    2. 总结提取规划规则
-    3. 查询目的地天气（可选）
-    4. 生成详细行程
-    5. 验证交通路线（可选）
-    6. 润色输出最终计划
-
+    1. 搜索小红书获取目的地攻略（路线、美食、住宿等）
+    2. 提取结构化信息（景点详情、美食推荐、住宿区域等）
+    3. 检查信息质量，不足则继续搜索补充
+    4. 基于收集的信息生成详细行程
+    
     必需参数：destination（目的地）、days（天数）
     """
     args_schema: Type[BaseModel] = TravelPlanSchema
     
     _graph: Any = PrivateAttr(default=None)
-    _current_session_id: str = PrivateAttr(default="")  # ✅ 存储当前 session_id
+    _current_session_id: str = PrivateAttr(default="")
+    
     def __init__(self, travel_graph: Any = None, **data):
         super().__init__(**data)
         self._graph = travel_graph
@@ -1586,14 +2262,14 @@ class TravelPlanTool(BaseTool):
         group_type: str = "",
         preferences: List[str] = None,
         budget: str = "",
-        max_searches: int = 2,
-        skip_map: bool = True,
-        include_weather: bool = True,
+        max_searches: int = 3,
     ) -> str:
-        from src.models.schemas import UserProfile, PlanningRules
+ 
         
-        # ✅ 获取 session_id（优先级：实例变量 > 上下文变量）
+        # 获取 session_id
         final_session_id = self._current_session_id or get_session_id()
+        if not final_session_id:
+            final_session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         print(f"\n{'='*60}")
         print(f"🚀 开始生成旅行计划")
@@ -1603,24 +2279,18 @@ class TravelPlanTool(BaseTool):
         print(f"   👥 出行类型: {group_type or '未指定'}")
         print(f"   💝 偏好: {preferences or '无特殊偏好'}")
         print(f"   💰 预算: {budget or '中等'}")
-        print(f"   🔍 最大搜索次数: {max_searches}")
-        print(f"   🗺️ 地图验证: {'跳过' if skip_map else '启用'}")
-        print(f"   🌤️ 天气查询: {'启用' if include_weather else '跳过'}")
+        print(f"   🔍 最大搜索轮数: {max_searches}")
+        print(f"   🔑 Session ID: {final_session_id[:12]}...")
         print(f"{'='*60}\n")
-        
-        # 校验 session_id
-        if not final_session_id:
-            print("⚠️ Warning: session_id 为空，结果将无法缓存")
 
-        if final_session_id:
-          redis_service.update_plan_status(
-              final_session_id, 
-              status="processing", 
-              progress=10,
-              message="开始生成旅行计划..."
-          )
-
-
+        # 更新状态
+        # if final_session_id:
+        #     redis_service.update_plan_status(
+        #         final_session_id, 
+        #         status="processing", 
+        #         progress=10,
+        #         message="开始生成旅行计划..."
+        #     )
 
         # 构建用户画像
         user_profile = UserProfile(
@@ -1628,50 +2298,56 @@ class TravelPlanTool(BaseTool):
             destination=destination,
             days=days,
             date_range=date_range or "灵活",
-            group_type=group_type or "未指定",
+            group_type=group_type or "",
             preferences=preferences or [],
             budget=budget or "中等",
         )
 
-        # 构建初始状态
-        initial_state = {
-            "user_profile": user_profile,
-            # 搜索相关
-            "session_id": final_session_id,  # ✅ 添加这行
-            "search_results": None,
-            "_search_count": 0,
-            "_max_searches": max_searches,
-            "_search_queries": [],
-            # 规划相关
-            "planning_rules": None,
-            "draft_plan": None,
-            "validated_plan": None,
-            # 可选功能控制
-            "skip_map_validation": True,
-            "weather_info": None if include_weather else {"skipped": True},
-            # 输出
-            "final_result": None,
-        }
+        # ========== 构建初始状态（新结构）==========
+        initial_state = AgentState(
+            # 会话
+            session_id=final_session_id,
+            
+            # 用户输入
+            user_profile=user_profile,
+            
+            # 搜索阶段
+            search_results=None,
+            
+            # 提取阶段
+            extracted_info=None,
+            
+            # 最终输出
+            final_result=None,
+            
+            # 搜索控制
+            _search_count=0,
+            _max_searches=max_searches,
+            _searched_queries=[],
+            _missing_info=[],
+            
+            # Token 控制
+            _token_budget=TokenBudget(total_budget=20000),
+            
+            # 调试
+            _error=None,
+            _warnings=[],
+        )
 
         try:
             # 检查工作流是否初始化
             if self._graph is None:
-
-              error_msg = "旅行规划工作流未初始化"
-              if final_session_id:
-                  redis_service.update_plan_status(
-                      final_session_id, 
-                      status="failed", 
-                      message=error_msg
-                  )
-              return self._error_response(
-                  "旅行规划工作流未初始化，请确保正确传入 travel_graph",
-                  destination, days
-              )
+                error_msg = "旅行规划工作流未初始化"
+                # if final_session_id:
+                #     redis_service.update_plan_status(
+                #         final_session_id, 
+                #         status="failed", 
+                #         message=error_msg
+                #     )
+                return self._error_response(error_msg, destination, days)
             
             # 执行工作流
             print("🔄 开始执行工作流...")
-            print(f"   初始状态 session_id: {initial_state.get('session_id')}")  # ← 验证
             final_state = self._graph.invoke(initial_state)
             
             # 提取结果
@@ -1682,12 +2358,12 @@ class TravelPlanTool(BaseTool):
             print(f"\n❌ 工作流执行异常:")
             traceback.print_exc()
 
-            if final_session_id:
-              redis_service.update_plan_status(
-                  final_session_id, 
-                  status="failed", 
-                  message=str(e)
-              )
+            # if final_session_id:
+            #     redis_service.update_plan_status(
+            #         final_session_id, 
+            #         status="failed", 
+            #         message=str(e)
+            #     )
 
             return self._error_response(str(e), destination, days)
 
@@ -1702,6 +2378,8 @@ class TravelPlanTool(BaseTool):
         
         result = final_state.get("final_result")
         session_id = final_state.get("session_id", "")
+        plan_id = final_state.get("current_plan_id", "")  # 🆕 获取 plan_id
+        extracted_info = final_state.get("extracted_info", {})
         
         if result:
             print("\n✅ 旅行计划生成成功!")
@@ -1718,6 +2396,7 @@ class TravelPlanTool(BaseTool):
             response = {
                 "success": True,
                 "session_id": session_id,
+                "plan_id": plan_id,  # 🆕 添加 plan_id
                 "destination": destination,
                 "days": days,
                 "user_profile": {
@@ -1729,43 +2408,31 @@ class TravelPlanTool(BaseTool):
                     "budget": user_profile.budget,
                 },
                 "plan": plan_dict,
-                # 包含中间数据（可选，用于调试）
                 "meta": {
                     "search_count": final_state.get("_search_count", 0),
-                    "has_weather": final_state.get("weather_info") is not None,
-                    "has_map_validation": final_state.get("validated_plan") is not None,
+                    "searched_queries": final_state.get("_searched_queries", []),
+                    "extracted_info_summary": self._summarize_extracted_info(extracted_info),
+                    "token_consumed": self._get_token_consumed(final_state),
                 }
             }
             
             return json.dumps(response, ensure_ascii=False, indent=2)
         
         else:
-            # 尝试从其他字段获取部分结果
-            draft_plan = final_state.get("draft_plan")
-            validated_plan = final_state.get("validated_plan")
-            planning_rules = final_state.get("planning_rules")
-            
-            if validated_plan or draft_plan:
-                print("\n⚠️ 未生成最终结果，但有草案数据")
+            # 尝试从 extracted_info 获取部分结果
+            if extracted_info:
+                print("\n⚠️ 未生成最终行程，但有提取信息")
                 return json.dumps({
                     "success": False,
                     "partial": True,
                     "destination": destination,
                     "days": days,
-                    "draft_plan": validated_plan or draft_plan,
-                    "planning_rules": planning_rules.model_dump() if planning_rules and hasattr(planning_rules, 'model_dump') else None,
-                    "message": "规划未完全完成，返回草案数据"
-                }, ensure_ascii=False, indent=2)
-            
-            elif planning_rules:
-                print("\n⚠️ 仅完成搜索总结阶段")
-                return json.dumps({
-                    "success": False,
-                    "partial": True,
-                    "destination": destination,
-                    "days": days,
-                    "planning_rules": planning_rules.model_dump() if hasattr(planning_rules, 'model_dump') else str(planning_rules),
-                    "message": "仅完成信息收集，未生成行程"
+                    "extracted_info": extracted_info,
+                    "message": "已收集信息但未能生成完整行程",
+                    "meta": {
+                        "search_count": final_state.get("_search_count", 0),
+                        "searched_queries": final_state.get("_searched_queries", []),
+                    }
                 }, ensure_ascii=False, indent=2)
             
             else:
@@ -1773,6 +2440,36 @@ class TravelPlanTool(BaseTool):
                     "工作流执行完成但无有效结果",
                     destination, days
                 )
+
+    def _summarize_extracted_info(self, extracted_info: dict) -> dict:
+        """生成提取信息摘要"""
+        if not extracted_info:
+            return {}
+        
+        routes = extracted_info.get("routes", [])
+        places = extracted_info.get("places", [])
+        food = extracted_info.get("food", {})
+        accommodation = extracted_info.get("accommodation", {})
+        
+        return {
+            "routes_count": len(routes),
+            "places_count": len(places),
+            "food_count": (
+                len(food.get("specialties", [])) + 
+                len(food.get("restaurants", [])) +
+                len(food.get("streets", []))
+            ) if isinstance(food, dict) else 0,
+            "has_accommodation": bool(accommodation.get("recommended_areas") if isinstance(accommodation, dict) else accommodation),
+            "has_transportation": bool(extracted_info.get("transportation")),
+            "avoid_count": len(extracted_info.get("avoid", [])),
+        }
+
+    def _get_token_consumed(self, final_state: dict) -> int:
+        """获取 Token 消耗"""
+        budget = final_state.get("_token_budget")
+        if budget and hasattr(budget, 'get_total_consumed'):
+            return budget.get_total_consumed()
+        return 0
 
     def _error_response(self, error_msg: str, destination: str, days: int) -> str:
         """生成错误响应"""
@@ -1783,7 +2480,6 @@ class TravelPlanTool(BaseTool):
             "days": days,
             "suggestion": "请检查网络连接或稍后重试"
         }, ensure_ascii=False, indent=2)
-
 
 # ============ 简化版工具（不依赖工作流） ============
 
@@ -1863,7 +2559,7 @@ def get_all_tools(travel_graph: Any = None) -> List[BaseTool]:
         # GeoCodeTool(),
         
         # # 天气工具
-        WeatherTool(),
+        # WeatherTool(),
         
         # 规划工具
         TravelPlanTool(travel_graph=travel_graph),
